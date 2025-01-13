@@ -32,7 +32,7 @@
 ###         STANDARD MODULES         ###
 ########################################
 
-require 5.012000; # first version where POSIX::lchown is documented
+require 5.004000; # first version where POSIX::lchown is documented
 use strict;
 use warnings;
 
