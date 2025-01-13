@@ -4,7 +4,6 @@
 #                                                                      #
 # rsnapshot                                                            #
 # by Nathan Rosenquist                                                 #
-# now maintained by Benedikt Heine                                     #
 #                                                                      #
 # The official rsnapshot website is located at                         #
 # http://www.rsnapshot.org/                                            #
@@ -161,6 +160,9 @@ my $use_lazy_deletes = 0;    # do not delete the oldest archive until after back
 
 # set default for number of tries
 my $rsync_numtries = 1;      # by default, try once
+
+# set default wait time between tries
+my $rsync_wait_between_tries = 0;      # by default, don't wait
 
 # exactly how the program was called, with all arguments
 # this is set before getopts() modifies @ARGV
@@ -937,7 +939,7 @@ sub parse_config_file {
 				}
 			}
 
-			# make sure interval is alpha-numeric
+			# make sure interval is alphanumeric
 			if ($value !~ m/^[\w\d]+$/) {
 				config_err($file_line_num,
 					"$line - \"$value\" is not a valid $retain name, must be alphanumeric characters only");
@@ -1496,11 +1498,34 @@ sub parse_config_file {
 			}
 			if (!is_valid_rsync_numtries($value)) {
 				config_err($file_line_num,
-					"$line - \"$value\" is not a legal value for rsync_numtries, must be greater than or equal to 0");
+					"$line - \"$value\" is not a legal value for rsync_numtries, must be greater than or equal to 1");
 				next;
 			}
 
 			$rsync_numtries = int($value);
+			$line_syntax_ok = 1;
+			next;
+		}
+
+		# RSYNC WAIT BETWEEN TRIES
+		if ($var eq 'rsync_wait_between_tries') {
+			if (!defined($value)) {
+				config_err($file_line_num, "$line - rsync_wait_between_tries can not be blank");
+				next;
+			}
+
+			if (!is_integer($value)) {
+				config_err($file_line_num, "$line - rsync_wait_between_tries must be an integer");
+				next;
+			}
+
+			$rsync_wait_between_tries = int($value);
+			if ($rsync_wait_between_tries < 0) {
+				config_err($file_line_num,
+					"$line - \"$value\" is not a legal value for rsync_wait_between_tries, must be greater than or equal to 0");
+				next;
+			}
+
 			$line_syntax_ok = 1;
 			next;
 		}
@@ -2788,10 +2813,22 @@ sub is_valid_rsync_numtries {
 	if (!defined($value)) { return (0); }
 
 	if ($value =~ m/^\d+$/) {
-		if (($value >= 0)) {
+		if (($value >= 1)) {
 			return (1);
 		}
 	}
+}
+
+# accepts one argument
+# checks if argument is a integer
+# returns 1 on success, 0 on failure
+sub is_integer {
+	my $var = shift(@_);
+
+	if (!defined($var))   { return (0); }
+	if ($var !~ m/^\d+$/) { return (0); }
+
+	return (1);
 }
 
 # accepts one argument
@@ -3897,6 +3934,11 @@ sub rsync_backup_point {
 	if (0 == $test) {
 		while ($tryCount < $rsync_numtries && $result != 0) {
 
+			if($tryCount > 0 && $rsync_wait_between_tries > 0) {
+				print_msg("retrying rsync in $rsync_wait_between_tries seconds", 5);
+				sleep($rsync_wait_between_tries);
+			}
+
 			# open rsync and capture STDOUT and STDERR
 			# the 3rd argument is undefined, that STDERR gets mashed into STDOUT and we
 			# don't have to care about getting both STREAMS together without mixing up time
@@ -3936,7 +3978,7 @@ sub rsync_backup_point {
 		}
 	}
 
-	# delte the traps manually
+	# delete the traps manually
 	# umount LVM Snapshot if it is mounted
 	if (1 == $traps{"linux_lvm_mountpoint"}) {
 		$traps{"linux_lvm_mountpoint"} = 0;
@@ -4662,7 +4704,7 @@ sub rotate_higher_interval {
 	if (-d "$config_vars{'snapshot_root'}/$interval.$interval_max") {
 
 		# if use_lazy_deletes is set move the oldest directory to _delete.$$
-		# otherwise preform the default behavior
+		# otherwise perform the default behavior
 		if (1 == $use_lazy_deletes) {
 			print_cmd(
 				"mv ",
@@ -6091,7 +6133,11 @@ sub get_retval {
 		bail("get_retval() was passed $retval, a number is required");
 	}
 
-	return ($retval / 256);
+	if ($retval & 0x7f) {
+		return (128 + ($retval & 0x7f));
+	}
+
+	return ($retval >> 8);
 }
 
 # accepts two file paths
@@ -6628,8 +6674,8 @@ B<rsnapshot> [B<-vtxqVD>] [B<-c> cfgfile] [command] [args]
 B<rsnapshot> is a filesystem snapshot utility. It can take incremental
 snapshots of local and remote filesystems for any number of machines.
 
-Local filesystem snapshots are handled with B<rsync(1)>. Secure remote
-connections are handled with rsync over B<ssh(1)>, while anonymous
+Local filesystem snapshots are handled with L<rsync(1)>. Secure remote
+connections are handled with rsync over L<ssh(1)>, while anonymous
 rsync connections simply use an rsync server. Both remote and local
 transfers depend on rsync.
 
@@ -6644,7 +6690,7 @@ of cron jobs. It is possible, however, to run as any arbitrary user
 with an alternate configuration file.
 
 All important options are specified in a configuration file, which is
-located by default at B</etc/rsnapshot.conf>. An alternate file can be
+located by default at F</etc/rsnapshot.conf>. An alternate file can be
 specified on the command line. There are also additional options which
 can be passed on the command line.
 
@@ -6670,12 +6716,12 @@ B<-D> a firehose of diagnostic information
 
 =head1 CONFIGURATION
 
-B</etc/rsnapshot.conf> is the default configuration file. All parameters
-in this file must be separated by tabs. B</etc/rsnapshot.conf.default>
+F</etc/rsnapshot.conf> is the default configuration file. All parameters
+in this file must be separated by tabs. F</etc/rsnapshot.conf.default>
 can be used as a reference.
 
-It is recommended that you copy B</etc/rsnapshot.conf.default> to
-B</etc/rsnapshot.conf>, and then modify B</etc/rsnapshot.conf> to suit
+It is recommended that you copy F</etc/rsnapshot.conf.default> to
+F</etc/rsnapshot.conf>, and then modify F</etc/rsnapshot.conf> to suit
 your needs.
 
 Long lines may be split over several lines.  "Continuation" lines
@@ -6706,13 +6752,13 @@ interpreted.
 
 =back
 
-B<no_create_root>     If set to 1, rsnapshot won't create snapshot_root directory
+B<no_create_root>     If set to 1, rsnapshot won't create B<snapshot_root> directory
 
-B<cmd_rsync>          Full path to rsync (required)
+B<cmd_rsync>          Full path to C<rsync> (required)
 
-B<cmd_ssh>            Full path to ssh (optional)
+B<cmd_ssh>            Full path to C<ssh> (optional)
 
-B<cmd_cp>             Full path to cp  (optional, but must be GNU version)
+B<cmd_cp>             Full path to C<cp> (optional, but must be GNU version)
 
 =over 4
 
@@ -6729,13 +6775,13 @@ files over (assuming there are any).
 
 =back
 
-B<cmd_rm>             Full path to rm (optional)
+B<cmd_rm>             Full path to C<rm> (optional)
 
-B<cmd_logger>         Full path to logger (optional, for syslog support)
+B<cmd_logger>         Full path to C<logger> (optional, for syslog support)
 
-B<cmd_du>             Full path to du (optional, for disk usage reports)
+B<cmd_du>             Full path to C<du> (optional, for disk usage reports)
 
-B<cmd_rsnapshot_diff> Full path to rsnapshot-diff (optional)
+B<cmd_rsnapshot_diff> Full path to C<rsnapshot-diff> (optional)
 
 B<cmd_preexec>
 
@@ -6952,10 +6998,33 @@ List of long arguments to pass to rsync.  The default values are
 This means that the directory structure in each backup point destination
 will match that in the backup point source.
 
-Quotes are permitted in rsync_long_args, eg --rsync-path="sudo /usr/bin/rsync".
+Quotes are permitted in B<rsync_long_args>, eg C<--rsync-path='sudo /usr/bin/rsync'>.
 You may use either single (') or double (") quotes, but nested quotes (including
 mixed nested quotes) are not permitted.  Similar quoting is also allowed in
-per-backup-point rsync_long_args.
+per-backup-point B<rsync_long_args>.
+
+=back
+
+B<rsync_numtries    0>
+
+=over 4
+
+Number of additional attempts for running rsync for each given backup source.
+Whenever the rsync operation for a source finishes with a non-zero exitcode,
+rsnapshot will repeat this operation until the configured number of
+"rsync_numtries" is reached or rsync finishes successfully.
+By default no repeated attempts are performed ("rsync_numtries 0").
+
+=back
+
+B<rsync_wait_between_tries    0>
+
+=over 4
+
+Wait between tries in seconds.
+Specify the duration in seconds to wait between retries of the rsync operation.
+The number of retries should be defined in rsync_numtries.
+The default wait time is 0 seconds.
 
 =back
 
@@ -7143,7 +7212,7 @@ B<backup   /var/     localhost/   one_fs=1>
 =over 4
 
 This is the same as the other examples, but notice the fourth column.
-This is how you specify per-backup-point options to over-ride global
+This is how you specify per-backup-point options to override global
 settings.  This extra parameter can take several options, separated
 by B<commas>.
 
@@ -7182,15 +7251,11 @@ a destination directory for a backup_script that will clobber other backups.
 
 So in this example, say the backup_database.sh script simply runs a command like:
 
-=over 4
+    #!/bin/sh
 
-#!/bin/sh
+    mysqldump -uusername mydatabase > mydatabase.sql
 
-mysqldump -uusername mydatabase > mydatabase.sql
-
-chmod u=r,go= mydatabase.sql	# r-------- (0400)
-
-=back
+    chmod u=r,go= mydatabase.sql	# r-------- (0400)
 
 rsnapshot will take the generated "mydatabase.sql" file and move it into the
 <snapshot_root>/<retain>.0/db_backup/ directory. On subsequent runs,
@@ -7201,15 +7266,15 @@ additional disk space will be taken up.
 
 =back
 
-B<backup_exec      ssh root@1.2.3.4 "du -sh /.offsite_backup"                     optional/>
+B<backup_exec      ssh root@1.2.3.4 "du -sh /.offsite_backup"                     optional>
 
-B<backup_exec      rsync -az /.snapshots/daily.0 root@1.2.3.4:/.offsite_backup/   required/>
+B<backup_exec      rsync -az /.snapshots/daily.0 root@1.2.3.4:/.offsite_backup/   required>
 
 B<backup_exec      /bin/true/>
 
 =over 4
 
-backup_exec simply runs the command listed. The second argument is not
+B<backup_exec> simply runs the command listed. The second argument is not
 required and defaults to a value of 'optional'. It specifies the importance
 that the command return 0. Valid values are 'optional' and 'required'. If the
 command is specified as optional, a non-zero exit status from the command will
@@ -7288,7 +7353,7 @@ also want to run it from the command line once or twice to get
 a feel for what it's doing.
 
 Here is an example crontab entry, assuming that backup levels B<alpha>,
-B<beta>, B<gamma> and B<delta> have been defined in B</etc/rsnapshot.conf>
+B<beta>, B<gamma> and B<delta> have been defined in F</etc/rsnapshot.conf>
 
 =over 4
 
@@ -7333,7 +7398,7 @@ your alpha snapshot will fail sometimes because the beta still has the lock.
 
 Remember that these are just the times that the program runs.
 To set the number of backups stored, set the B<retain> numbers in
-B</etc/rsnapshot.conf>
+F</etc/rsnapshot.conf>
 
 To check the disk space used by rsnapshot, you can call it with the "du" argument.
 
@@ -7379,7 +7444,7 @@ B<rsnapshot diff /.snapshots/beta.0 /.snapshots/beta.1>
 
 =back
 
-This will call the rsnapshot-diff program, which will scan both directories
+This will call the C<rsnapshot-diff> program, which will scan both directories
 looking for differences (based on hard links).
 
 B<rsnapshot sync>
@@ -7404,6 +7469,18 @@ B<30 23 1 * *         /usr/local/bin/rsnapshot delta>
 
 The sync operation simply runs rsync and all backup scripts. In this scenario, all
 calls simply rotate directories, even the lowest backup level.
+
+Please note, that the above "rsnapshot sync && rsnapshot alpha" command will
+skip rotation, whenever rsnapshot finishes its sync operation "with warnings"
+(e.g. some files vanished, while rsync was running).
+If you want to ensure rotation even in case of warnings, then the following
+command may be suitable for your cron job:
+
+=over 4
+
+B<0 */4 * * *         /usr/local/bin/rsnapshot sync || [ $? -eq 2 ] && /usr/local/bin/rsnapshot alpha>
+
+=back
 
 =back
 
@@ -7483,13 +7560,13 @@ B<http://lists.sourceforge.net/lists/listinfo/rsnapshot-discuss>
 
 =head1 NOTES
 
-Make sure your /etc/rsnapshot.conf file has all elements separated by tabs.
-See /etc/rsnapshot.conf.default for a working example file.
+Make sure your F</etc/rsnapshot.conf> file has all elements separated by tabs.
+See F</etc/rsnapshot.conf.default> for a working example file.
 
 Make sure you put a trailing slash on the end of all directory references.
 If you don't, you may have extra directories created in your snapshots.
 For more information on how the trailing slash is handled, see the
-B<rsync(1)> manpage.
+L<rsync(1)> manpage.
 
 Make sure to make the snapshot directory chmod 700 and owned by root
 (assuming backups are made by the root user). If the snapshot directory
@@ -7500,17 +7577,13 @@ If you would like regular users to be able to restore their own backups,
 there are a number of ways this can be accomplished. One such scenario
 would be:
 
-Set B<snapshot_root> to B</.private/.snapshots> in B</etc/rsnapshot.conf>
+Set B<snapshot_root> to B</.private/.snapshots> in F</etc/rsnapshot.conf>
 
 Set the file permissions on these directories as follows:
 
-=over 4
+    drwx------    /.private
 
-drwx------    /.private
-
-drwxr-xr-x    /.private/.snapshots
-
-=back
+    drwxr-xr-x    /.private/.snapshots
 
 Export the /.private/.snapshots directory over read-only NFS, a read-only
 Samba share, etc.
@@ -7530,7 +7603,7 @@ configuration, or using an alternate shell.
 
 BE CAREFUL! If the private key is obtained by an attacker, they will
 have free run of all the systems involved. If you are unclear on how
-to do this, see B<ssh(1)>, B<sshd(1)>, and B<ssh-keygen(1)>.
+to do this, see L<ssh(1)>, L<sshd(1)>, and L<ssh-keygen(1)>.
 
 Backup scripts are run as the same user that rsnapshot is running as.
 Typically this is root. Make sure that all of your backup scripts are
@@ -7547,7 +7620,7 @@ backups will be restored in the same environment they came from. Without
 this option, restoring backups for multiple heterogeneous servers would
 be unmanageable. If you are archiving snapshots with GNU tar, you may
 want to use the --numeric-owner parameter. Also, keep a copy of the
-archived system's /etc/passwd and /etc/group files handy for the UID/GID
+archived system's F</etc/passwd> and F</etc/group> files handy for the UID/GID
 to name mapping.
 
 If you remove backup points in the config file, the previously archived
@@ -7560,11 +7633,7 @@ For example, if you were previously backing up /home/ with a destination
 of localhost/, and alpha is your smallest backup level, you would need to do
 the following to reclaim that disk space:
 
-=over 4
-
-rm -rf <snapshot_root>/alpha.0/localhost/home/
-
-=back
+    rm -rf <snapshot_root>/alpha.0/localhost/home/
 
 Please note that the other snapshots previously made of /home/ will still
 be using that disk space, but since the files are flushed out of alpha.0/,
@@ -7599,7 +7668,7 @@ David Cantrell (B<david@cantrell.org.uk>)
 Previous maintainer of rsnapshot
 
 =item -
-Wrote the rsnapshot-diff utility
+Wrote the C<rsnapshot-diff> utility
 
 =item -
 Improved how use_lazy_deletes work so slow deletes don't screw up the next
@@ -7625,16 +7694,16 @@ Fixed a number of other bugs and buglets
 
 =back
 
-Benedikt Heine <benedikt@heine.rocks>
+Benedikt Heine <bebe@bebehei.de>
 
 =over 4
 
 =item -
-Current rsnapshot maintainer
+ex-maintainer of rsnapshot (2015-2017)
 
 =back
 
-Carl Wilhelm Soderstrom B<(chrome@real-time.com)>
+Carl Wilhelm Soderstrom (B<chrome@real-time.com>)
 
 =over 4
 
@@ -7754,7 +7823,7 @@ Anthony Ettinger (B<apwebdesign@yahoo.com>)
 
 =over 4
 
-Wrote the utils/mysqlbackup.pl script
+Wrote the C<utils/mysqlbackup.pl> script
 
 =back
 
@@ -7762,7 +7831,7 @@ Sherman Boyd
 
 =over 4
 
-Wrote utils/random_file_verify.sh script
+Wrote C<utils/random_file_verify.sh> script
 
 =back
 
@@ -7770,7 +7839,7 @@ William Bear (B<bear@umn.edu>)
 
 =over 4
 
-Wrote the utils/rsnapreport.pl script (pretty summary of rsync stats)
+Wrote the C<utils/rsnapreport.pl> script (pretty summary of rsync stats)
 
 =back
 
@@ -7778,7 +7847,7 @@ Eric Anderson (B<anderson@centtech.com>)
 
 =over 4
 
-Improvements to utils/rsnapreport.pl.
+Improvements to C<utils/rsnapreport.pl>.
 
 =back
 

@@ -191,12 +191,19 @@ lockfile	/var/run/rsnapshot.pid
 #
 #use_lazy_deletes	0
 
-# Number of rsync re-tries. If you experience any network problems or
+# Number of rsync tries. If you experience any network problems or
 # network card issues that tend to cause ssh to fail with errors like
-# "Corrupted MAC on input", for example, set this to a non-zero value
-# to have the rsync operation re-tried.
+# "Corrupted MAC on input", for example, set this to a value > 1
+# to have the rsync operation re-tried. The default is 1.
 #
-#rsync_numtries 0
+#rsync_numtries	1
+
+# Wait between tries in seconds.
+# Specify the duration in seconds to wait between retries of the rsync operation.
+# The number of retries should be defined in rsync_numtries.
+# The default wait time is 0 seconds.
+#
+#rsync_wait_between_tries	0
 
 # LVM parameters. Used to backup with creating lvm snapshot before backup
 # and removing it after. This should ensure consistency of data in some special
